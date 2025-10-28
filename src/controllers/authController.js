@@ -49,6 +49,9 @@ export const register = async (req, res) => {
 
         res.json({ message: 'Código de verificación enviado. Revisa tu correo.' });
     } catch (error) {
+
+        console.log(error)
+        
         console.error(error);
         res.status(500).json({ message: 'Error al registrar usuario' });
     }
