@@ -7,32 +7,30 @@ import { tempStorage } from '../config/tempStorage.js';
 
 const client = new OAuth2Client(process.env.GOOGLE_CLIENT_ID);
 
-// ======================= REGISTRO =======================
 export const register = async (req, res) => {
-    let { name, email, password } = req.body;
+    const { name, email, password } = req.body;
 
     if (!name || !email || !password)
         return res.status(400).json({ message: 'Todos los campos son requeridos' });
 
-    email = email.toLowerCase();
-
     try {
         const [existing] = await db.query('SELECT * FROM users WHERE email = ?', [email]);
+
         if (existing.length > 0)
             return res.status(400).json({ message: 'El correo ya está registrado' });
 
         const hashedPassword = await bcrypt.hash(password, 10);
         const verificationCode = Math.floor(100000 + Math.random() * 900000);
 
+        // Guardar en Map en vez de sesión
         tempStorage.saveRegistration(email, {
             name,
             email,
             password: hashedPassword,
-            verificationCode,
-            createdAt: Date.now()
+            verificationCode
         });
 
-        console.log('Registro guardado:', email, '- Código:', verificationCode);
+        console.log(' Registro guardado:', email, '- Código:', verificationCode);
 
         await transporter.sendMail({
             from: `"Soporte" <${process.env.EMAIL_USER}>`,
@@ -53,7 +51,6 @@ export const register = async (req, res) => {
     }
 };
 
-// ======================= VERIFICAR CORREO =======================
 export const verifyEmail = async (req, res) => {
     const { code, email } = req.body;
 
@@ -64,7 +61,7 @@ export const verifyEmail = async (req, res) => {
     if (!tempUserData)
         return res.status(400).json({ message: 'No hay registro pendiente de verificación' });
 
-    const EXPIRATION_TIME = 4 * 60 * 1000; // 4 minutos
+    const EXPIRATION_TIME = 4 * 60 * 1000;
     if (Date.now() - tempUserData.createdAt > EXPIRATION_TIME) {
         tempStorage.deleteRegistration(email);
         return res.status(400).json({ message: 'El código de verificación ha expirado' });
@@ -72,6 +69,7 @@ export const verifyEmail = async (req, res) => {
 
     try {
         if (parseInt(code) === tempUserData.verificationCode) {
+            // Verificar nuevamente que el correo no se haya registrado
             const [existing] = await db.query('SELECT * FROM users WHERE email = ?', [email]);
             if (existing.length > 0) {
                 tempStorage.deleteRegistration(email);
@@ -95,9 +93,9 @@ export const verifyEmail = async (req, res) => {
     }
 };
 
-// ======================= REENVIAR CÓDIGO =======================
 export const resendCode = async (req, res) => {
     const { email } = req.body;
+
     const tempUserData = tempStorage.getRegistration(email);
 
     if (!tempUserData)
@@ -106,10 +104,10 @@ export const resendCode = async (req, res) => {
     try {
         const verificationCode = Math.floor(100000 + Math.random() * 900000);
 
+        // Actualizar código
         tempStorage.saveRegistration(email, {
             ...tempUserData,
-            verificationCode,
-            createdAt: Date.now()
+            verificationCode
         });
 
         await transporter.sendMail({
@@ -132,28 +130,27 @@ export const resendCode = async (req, res) => {
     }
 };
 
-// ======================= RECUPERAR CONTRASEÑA =======================
+// Recuperación de contraseña
 export const forgotPassword = async (req, res) => {
-    let { email } = req.body;
+    const { email } = req.body;
 
     if (!email)
         return res.status(400).json({ message: 'El correo es requerido' });
 
-    email = email.toLowerCase();
-
     try {
         const [rows] = await db.query('SELECT * FROM users WHERE email = ?', [email]);
+
         if (rows.length === 0)
             return res.status(404).json({ message: 'No existe una cuenta con ese correo' });
 
         const user = rows[0];
         const recoveryCode = Math.floor(100000 + Math.random() * 900000);
 
+        // Guardar en Map
         tempStorage.saveRecovery(email, {
             userId: user.id,
             recoveryCode,
-            verified: false,
-            createdAt: Date.now()
+            verified: false
         });
 
         await transporter.sendMail({
@@ -165,6 +162,7 @@ export const forgotPassword = async (req, res) => {
                 <p>Has solicitado recuperar tu contraseña.</p>
                 <p>Tu código de recuperación es:</p>
                 <h3>${recoveryCode}</h3>
+                <p>Ingresa este código en la aplicación para restablecer tu contraseña.</p>
                 <p><small>Este código expira en 10 minutos.</small></p>
             `
         });
@@ -176,9 +174,8 @@ export const forgotPassword = async (req, res) => {
     }
 };
 
-// ======================= VERIFICAR CÓDIGO DE RECUPERACIÓN =======================
 export const verifyRecoveryCode = async (req, res) => {
-    const { code, email } = req.body;
+    const { code, email } = req.body; // Necesitas enviar el email
 
     const passwordRecovery = tempStorage.getRecovery(email);
 
@@ -188,11 +185,12 @@ export const verifyRecoveryCode = async (req, res) => {
     const EXPIRATION_TIME = 10 * 60 * 1000;
     if (Date.now() - passwordRecovery.createdAt > EXPIRATION_TIME) {
         tempStorage.deleteRecovery(email);
-        return res.status(400).json({ message: 'El código ha expirado, solicita uno nuevo' });
+        return res.status(400).json({ message: 'El código de recuperación ha expirado' });
     }
 
     try {
         if (parseInt(code) === passwordRecovery.recoveryCode) {
+            // Marcar como verificado
             tempStorage.saveRecovery(email, {
                 ...passwordRecovery,
                 verified: true
@@ -207,9 +205,8 @@ export const verifyRecoveryCode = async (req, res) => {
     }
 };
 
-// ======================= RESTABLECER CONTRASEÑA =======================
 export const resetPassword = async (req, res) => {
-    const { newPassword, email } = req.body;
+    const { newPassword, email } = req.body; // Necesitas enviar el email
 
     const passwordRecovery = tempStorage.getRecovery(email);
 
@@ -230,7 +227,11 @@ export const resetPassword = async (req, res) => {
 
     try {
         const hashedPassword = await bcrypt.hash(newPassword, 10);
-        await db.query('UPDATE users SET password = ? WHERE id = ?', [hashedPassword, passwordRecovery.userId]);
+
+        await db.query(
+            'UPDATE users SET password = ? WHERE id = ?',
+            [hashedPassword, passwordRecovery.userId]
+        );
 
         const [rows] = await db.query('SELECT name FROM users WHERE id = ?', [passwordRecovery.userId]);
         const userName = rows[0]?.name || 'Usuario';
@@ -246,37 +247,44 @@ export const resetPassword = async (req, res) => {
         });
 
         tempStorage.deleteRecovery(email);
+
         res.json({ message: 'Contraseña actualizada exitosamente' });
     } catch (error) {
         console.error(error);
         res.status(500).json({ message: 'Error al actualizar la contraseña' });
     }
+
 };
 
-// ======================= LOGIN =======================
+
+
 export const login = async (req, res) => {
-    let { email, password } = req.body;
+    const { email, password } = req.body;
 
     if (!email || !password)
         return res.status(400).json({ message: "Correo y contraseña requeridos" });
 
-    email = email.toLowerCase();
-
     try {
         const [rows] = await db.query("SELECT * FROM users WHERE email = ?", [email]);
+
         if (rows.length === 0)
             return res.status(400).json({ message: "Credenciales incorrectas" });
 
         const user = rows[0];
 
-        if (!user.verified)
-            return res.status(400).json({ message: "Debes verificar tu correo antes de iniciar sesión" });
-
         const isMatch = await bcrypt.compare(password, user.password);
+
         if (!isMatch)
             return res.status(400).json({ message: "Credenciales incorrectas" });
 
         const token = createToken(user);
+
+        // Guardar sesión (opcional)
+        req.session.user = {
+            id: user.id,
+            name: user.name,
+            email: user.email
+        };
 
         res.status(200).json({
             message: "Inicio de sesión exitoso",
@@ -294,7 +302,7 @@ export const login = async (req, res) => {
     }
 };
 
-// ======================= LOGIN CON GOOGLE =======================
+// 🔹 LOGIN CON GOOGLE
 export const googleAuth = async (req, res) => {
     const { googleToken } = req.body;
 
@@ -302,6 +310,7 @@ export const googleAuth = async (req, res) => {
         return res.status(400).json({ message: "Token de Google no recibido" });
 
     try {
+        // Verificar token de Google
         const ticket = await client.verifyIdToken({
             idToken: googleToken,
             audience: process.env.GOOGLE_CLIENT_ID,
@@ -310,21 +319,30 @@ export const googleAuth = async (req, res) => {
         const payload = ticket.getPayload();
         const { email, name, sub } = payload;
 
+        // Buscar usuario por email
         const [existingUser] = await db.query("SELECT * FROM users WHERE email = ?", [email]);
 
         let user;
         if (existingUser.length === 0) {
+            // Crear usuario nuevo
             const hashedPassword = await bcrypt.hash(sub, 10);
             const [result] = await db.query(
-                "INSERT INTO users (name, email, password, verified) VALUES (?, ?, ?, ?)",
-                [name, email, hashedPassword, 1]
+                "INSERT INTO users (name, email, password) VALUES (?, ?, ?)",
+                [name, email, hashedPassword]
             );
+
             user = { id: result.insertId, name, email };
         } else {
             user = existingUser[0];
         }
 
         const token = createToken(user);
+
+        req.session.user = {
+            id: user.id,
+            name: user.name,
+            email: user.email
+        };
 
         res.status(200).json({
             message: "Inicio de sesión con Google exitoso",
@@ -335,37 +353,38 @@ export const googleAuth = async (req, res) => {
                 email: user.email
             }
         });
+
     } catch (error) {
         console.error("Error en autenticación con Google:", error);
         res.status(400).json({ message: "Error en autenticación con Google" });
     }
 };
 
-// ======================= REENVIAR CÓDIGO DE RECUPERACIÓN =======================
-export const resendRecoveryCode = async (req, res) => {
-    const { email } = req.body;
 
-    const passwordRecovery = tempStorage.getRecovery(email);
+// Reenviar código de recuperación
+export const resendRecoveryCode = async (req, res) => {
+    const passwordRecovery = req.session.passwordRecovery;
 
     if (!passwordRecovery)
         return res.status(400).json({ message: 'No hay solicitud de recuperación activa' });
 
     try {
+        // Generar nuevo código
         const recoveryCode = Math.floor(100000 + Math.random() * 900000);
 
-        tempStorage.saveRecovery(email, {
-            ...passwordRecovery,
-            recoveryCode,
-            verified: false,
-            createdAt: Date.now()
-        });
+        // Actualizar sesión
+        req.session.passwordRecovery.recoveryCode = recoveryCode;
+        req.session.passwordRecovery.createdAt = Date.now();
+        req.session.passwordRecovery.verified = false; // Resetear verificación
 
+        // Obtener nombre del usuario
         const [rows] = await db.query('SELECT name FROM users WHERE id = ?', [passwordRecovery.userId]);
         const userName = rows[0]?.name || 'Usuario';
 
+        // Reenviar correo
         await transporter.sendMail({
             from: `"Soporte" <${process.env.EMAIL_USER}>`,
-            to: email,
+            to: passwordRecovery.email,
             subject: 'Nuevo código de recuperación',
             html: `
                 <h2>Hola ${userName}</h2>
@@ -377,6 +396,7 @@ export const resendRecoveryCode = async (req, res) => {
         });
 
         res.json({ message: 'Nuevo código enviado. Revisa tu correo.' });
+
     } catch (error) {
         console.error(error);
         res.status(500).json({ message: 'Error al reenviar código' });
