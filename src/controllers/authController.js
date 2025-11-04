@@ -9,7 +9,9 @@ const client = new OAuth2Client(process.env.GOOGLE_CLIENT_ID);
 export const register = async (req, res) => {
     const { name, email, password } = req.body;
 
-    if (!name || !email || !password)
+    console.log(req.body);
+
+    if (!name || !email || !password)   
         return res.status(400).json({ message: 'Todos los campos son requeridos' });
 
     try {
@@ -52,7 +54,6 @@ export const register = async (req, res) => {
 
         console.log(error)
         
-        console.error(error);
         res.status(500).json({ message: 'Error al registrar usuario' });
     }
 };
@@ -242,8 +243,6 @@ export const googleAuth = async (req, res) => {
         res.status(400).json({ message: "Error en autenticación con Google" });
     }
 };
-
-// Añadir estas funciones al archivo authController.js
 
 // Solicitar recuperación de contraseña
 export const forgotPassword = async (req, res) => {
